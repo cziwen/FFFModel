@@ -1,0 +1,15 @@
+{
+  "_comment": "此文件用于 LSTM 股票预测模型的配置，请修改参数至你需要即可。",
+  "model_path": "训练好的模型/v_01.pth",
+  "ticker": "NVDA",
+  "start_date": "2022-01-01",
+  "end_date": "2025-02-04",
+  "seq_length": 30,
+  "test_ratio": 0.01,
+  "num_epochs": 1000,
+  "input_size": 6,
+  "output_size": 6,
+  "hidden_size": 240,
+  "num_layers": 4,
+  "learning_rate": 0.00604
+}
