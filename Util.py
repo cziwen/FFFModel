@@ -24,10 +24,6 @@ def fetch_multi_feature_data_ (ticker, start_date, end_date,
     # 如果某些列不存在或拼写错误，会抛出 KeyError，你可以做个简单的保护
     return data[features].values
 
-import yfinance as yf
-import pandas as pd
-
-
 def fetch_multi_feature_data (
         ticker: str,
         start_date: str,
@@ -62,7 +58,7 @@ def fetch_multi_feature_data (
     data["Weekday"] = data.index.dayofweek
 
     # 5) 返回所需特征列 + 'Weekday'
-    return data[features + ["Weekday"]]
+    return data[features + ["Weekday"]].values
 
 
 def fetch_intraday_data (ticker, period="7d", interval="15m"):

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from Util import print_progress_bar
+from src.efficient_kan import KAN
 
 
 class LSTMStockPredictor(nn.Module):
@@ -17,7 +18,8 @@ class LSTMStockPredictor(nn.Module):
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
 
         # 2) 定义全连接层，用于回归预测
-        self.fc = nn.Linear(hidden_size, output_size)
+        # self.fc = nn.Linear(hidden_size, output_size)
+        self.kan = KAN([hidden_size, 64, output_size])
 
         # 3) 定义损失函数 & 优化器，并将它们赋值给 self
         self.criterion = nn.MSELoss()
@@ -38,7 +40,8 @@ class LSTMStockPredictor(nn.Module):
         out, _ = self.lstm(x, (h_0, c_0))
 
         # 取最后一个时间步的输出送入全连接层
-        out = self.fc(out[:, -1, :])
+        # out = self.fc(out[:, -1, :])
+        out = self.kan(out[:, -1, :])
         return out
 
     def train_model(self, X_train, y_train, num_epochs=100, save_after = False):
