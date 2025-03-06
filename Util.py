@@ -1,162 +1,202 @@
 import sys
-import pandas as pd
-import numpy as np
+import json
 import torch
+import numpy as np
+import pandas as pd
 import yfinance as yf
 import matplotlib.pyplot as plt
-import json
-import talib
+import requests
 
-def fetch_multi_feature_data_ (ticker, start_date, end_date,
+
+def fetch_multi_feature_data (ticker, interval, start_date, end_date,
                               features=["Close", "Open", "High", "Low", "Volume"]):
     """
-    获取多种特征 (开高低收+成交量等) 的日级别历史数据
+    下载多特征历史数据，并添加 'Weekday' 列表示星期几。
 
     :param ticker: 股票代码 (如 "AAPL")
+    :param interval: 数据间隔 (如 "15m")
     :param start_date: 开始日期 (如 "2022-01-01")
     :param end_date: 结束日期 (如 "2024-02-01")
-    :param features: 想要获取的列名称列表
-    :return: 包含所需列的 pandas.DataFrame，索引为日期
+    :param features: 所需特征列表
+    :return: 包含特征和 'Weekday' 列的 DataFrame
     """
-    data = yf.download (ticker, start=start_date, end=end_date, interval="1d")
-    # data 包含 [Open, High, Low, Close, Volume]
-
-    # 如果某些列不存在或拼写错误，会抛出 KeyError，你可以做个简单的保护
-    return data[features].values
-
-def fetch_multi_feature_data (
-        ticker: str,
-        start_date: str,
-        end_date: str,
-        features=["Close", "Open", "High", "Low", "Volume"]
-) -> pd.DataFrame:
-    """
-    获取多种特征 (开高低收+成交量等) 的日级别历史数据，并增加一个表示“星期几”的新列（0=Monday, 4=Friday）。
-    同时会剔除周六、周日的行（若存在）。
-
-    :param ticker: 股票代码 (如 "AAPL")
-    :param start_date: 开始日期 (如 "2022-01-01")
-    :param end_date: 结束日期 (如 "2024-02-01")
-    :param features: 想要获取的列名称列表（默认 [Close, Open, High, Low, Volume]）
-    :return: 包含所需列的 pandas.DataFrame，索引为交易日 (datetime)，
-             最后多一列 'Weekday' 表示周几 (0=Monday, 4=Friday)。
-    """
-
-    # 1) 从 yfinance 下载数据
-    data = yf.download (ticker, start=start_date, end=end_date, interval="1d")
-
-    # 2) 过滤无效特征列，避免 KeyError
-    # missing_features = set (features) - set (data.columns)
-    # if missing_features:
-    #     print (f"Warning: 以下列在下载的数据中不存在，将被忽略: {missing_features}")
-    # valid_features = [f for f in features if f in data.columns]
-
-    # 3) 剔除周六(5) 和 周日(6)（以防某些市场数据异常）
-    data = data[data.index.dayofweek < 5]
-
-    # 4) 添加 Weekday 列（0=Monday, 4=Friday）
-    data["Weekday"] = data.index.dayofweek
-
-    # 5) 返回所需特征列 + 'Weekday'
-    return data[features + ["Weekday"]].values
+    data = yf.download (ticker, start=start_date, end=end_date, interval=interval, auto_adjust=False)
+    if data.empty:
+        raise ValueError (f"未能获取 {ticker} 从 {start_date} 到 {end_date} 的数据。")
+    # data["Weekday"] = data.index.dayofweek
+    # return data[features + ["Weekday"]]
+    return data[features]
 
 
 def fetch_intraday_data (ticker, period="7d", interval="15m"):
     """
-    获取指定周期和时间间隔的日内 (Intraday) 数据
+    下载日内数据。
 
-    :param ticker: 股票代码 (如 "AAPL")
-    :param period: 需要获取的数据范围 (例如 "1d", "5d", "7d", "30d", "60d" etc.)
-    :param interval: 间隔, 可选 "1m", "2m", "5m", "15m", "30m", "1h" ...
-    :return: pandas.DataFrame (包含 Open, High, Low, Close, Volume, Adj Close 等)
+    :param ticker: 股票代码
+    :param period: 数据周期 (如 "7d")
+    :param interval: 数据间隔 (如 "15m")
+    :return: 下载的 DataFrame
     """
-    data = yf.download (ticker, period=period, interval=interval)
-    return data
+    return yf.download (ticker, period=period, interval=interval)
 
 
 def create_sequences (data, seq_length):
     """
-    创建时间序列数据集，每个样本包含 `seq_length` 天的【多特征输入】，
-    目标是预测第 `seq_length` 天的【多特征】。
+    将数组数据转换为序列样本，用于 LSTM 输入和目标。
 
-    参数:
-    -------
-    data : np.ndarray
-        形状 (N, F)，N 表示时间序列长度，F 表示特征数。
-
-    seq_length : int
-        LSTM 输入序列的长度 (窗口大小)。
-
-    返回:
-    -------
-    X_Tensor: torch.FloatTensor
-        形状 (样本数, seq_length, F)，对应 LSTM 输入。
-
-    y_Tensor: torch.FloatTensor
-        形状 (样本数, F)，对应预测目标 (单步、多特征)。
+    :param data: np.ndarray, 形状 (N, F)，N 是时间步数，F 是特征
+    :param seq_length: 序列长度
+    :return: X_Tensor (shape: (samples, seq_length, F)), y_Tensor (shape: (samples, F))
     """
     X, y = [], []
-    num_samples = len (data)
-
-    for i in range (num_samples - seq_length):
-        # 取前 seq_length 天 => shape (seq_length, F)
+    for i in range (len (data) - seq_length):
         X.append (data[i: i + seq_length])
-
-        # 取第 seq_length 天（这里是单步预测，但包含全部特征）=> shape (F,)
         y.append (data[i + seq_length])
-
-    # 转为 numpy 再转 torch
-    X = np.array (X)  # shape: (样本数, seq_length, F)
-    y = np.array (y)  # shape: (样本数, F)
-
-    X_Tensor = torch.tensor (X, dtype=torch.float32)
-    y_Tensor = torch.tensor (y, dtype=torch.float32)
-
-    return X_Tensor, y_Tensor
+    return torch.tensor (np.array (X), dtype=torch.float32), torch.tensor (np.array (y), dtype=torch.float32)
 
 
-def plot_stock_prediction (actual, predicted, ticker="Unknown"):
+def plot_stock_prediction (actual, predicted, config, ma_window=10):
     """
-    绘制股票预测结果，x 轴使用交易日序号 (0, 1, 2, ...) 而不是日期。
+    绘制股票预测结果，x 轴使用交易日序号，并额外绘制移动平均线。
 
-    :param actual: 实际价格 (array 或 list)
-    :param predicted: 预测价格 (array 或 list)
-    :param ticker: 股票代码（用于标题）
+    :param actual: 实际价格列表
+    :param predicted: 预测价格列表
+    :param config: 配置字典，包含 'interval' 和 'ticker'
+    :param ma_window: 移动平均的窗口大小，默认为 10
     """
     plt.figure (figsize=(10, 5))
-
-    # 生成 x 轴交易日序号 (0, 1, 2, ...)
     x_axis = range (len (actual))
-
-    # 绘制实际价格和预测价格
     plt.plot (x_axis, actual, label="Actual", color='blue')
     plt.plot (x_axis, predicted, label="Predicted", color='red', linestyle='dashed')
 
-    # 设置标签
-    plt.xlabel ("Trading Days")
-    plt.ylabel ("Stock Price")
-    plt.title (f"LSTM {ticker} Price Prediction")
-    plt.legend ()
+    # 计算移动平均线
+    actual_series = pd.Series (actual)
+    moving_avg = actual_series.rolling (window=ma_window).mean ()
+    plt.plot (x_axis, moving_avg, label=f"MA({ma_window})", color='green', linestyle=':')
 
-    # 显示图像
+    plt.xlabel (f"Trading Interval {config['interval']}")
+    plt.ylabel ("Stock Price")
+    plt.title (f"LSTM {config['ticker']} Price Prediction")
+    plt.legend ()
+    plt.show ()
+
+
+def plot_loss_curve (train_losses, val_losses=None, title="Loss Curve"):
+    """
+    绘制训练和验证损失曲线。
+
+    :param train_losses: 训练损失列表
+    :param val_losses: 验证损失列表（可选）
+    :param title: 图表标题
+    """
+    plt.figure (figsize=(8, 5))
+    plt.plot (train_losses, label="Train Loss", color="blue")
+    if val_losses is not None:
+        plt.plot (val_losses, label="Validation Loss", color="red")
+    plt.title (title)
+    plt.xlabel ("Epoch")
+    plt.ylabel ("Loss")
+    plt.legend ()
     plt.show ()
 
 
 def load_config (config_path="CONFIG.json"):
     """
-    从 JSON 配置文件中加载 CONFIG 字典
-    :param config_path: JSON 配置文件路径
+    加载 JSON 配置文件。
+
+    :param config_path: 配置文件路径
     :return: 配置字典
     """
     with open (config_path, "r", encoding="utf-8") as file:
-        config = json.load (file)
-    return config
+        return json.load (file)
 
 
 def print_progress_bar (progress, content=""):
-    '''
-    :param progress: 百分比进度
-    :param content: 需要显示的内容
-    '''
+    """
+    打印进度条。
+
+    :param progress: 进度百分比
+    :param content: 显示内容
+    """
     sys.stdout.write (f"\r进度[{int (progress)}/{100}] - {content}")
     sys.stdout.flush ()
+
+
+def fetch_polygon_data (ticker, interval, start_date, end_date,
+                        features=["c", "o", "h", "l", "v", "n"],
+                        api_key=None, multiplier=None, timespan=None):
+    """
+    通过 polygon.io API 下载历史数据，并返回包含指定特征的 DataFrame。
+
+    :param ticker: 股票代码 (如 "AAPL")
+    :param interval: 数据间隔 (例如 "1d", "15m", "1h")，用于解析 multiplier 与 timespan
+    :param start_date: 开始日期 (格式 "YYYY-MM-DD")
+    :param end_date: 结束日期 (格式 "YYYY-MM-DD")
+    :param features: 希望返回的字段列表，默认为 ["c", "o", "h", "l", "v"]
+                     分别代表 close、open、high、low 和 volume
+    :param api_key: polygon.io 的 API key（必填）
+    :param multiplier: (可选) 聚合倍数；若未提供，则根据 interval 自动解析
+    :param timespan: (可选) 时间单位，如 "day", "minute", "hour"；若未提供，则根据 interval 自动解析
+    :return: 包含指定特征的 pandas DataFrame
+    """
+    if api_key is None:
+        raise ValueError ("必须提供 polygon.io 的 API key。")
+
+    # 自动解析 multiplier 与 timespan，如果未指定
+    if multiplier is None or timespan is None:
+        if interval.endswith ("d"):
+            timespan = "day"
+            multiplier = int (interval[:-1])
+        elif interval.endswith ("m"):
+            timespan = "minute"
+            multiplier = int (interval[:-1])
+        elif interval.endswith ("h"):
+            timespan = "hour"
+            multiplier = int (interval[:-1])
+        else:
+            raise ValueError ("无法解析 interval，请明确提供 multiplier 和 timespan 参数。")
+
+    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start_date}/{end_date}"
+    params = {
+        "adjusted": "true",
+        "sort": "asc",
+        "limit": 50000,
+        "apiKey": api_key,
+        "session": "regular"  # 只返回常规交易时段数据
+    }
+    response = requests.get (url, params=params)
+    if response.status_code != 200:
+        raise Exception (f"获取数据失败: {response.text}")
+    data = response.json ()
+    if "results" not in data:
+        raise Exception (f"返回结果异常: {data}")
+
+    df = pd.DataFrame (data["results"])
+    # 将时间戳转换为 datetime（字段 "t" 为毫秒时间戳）
+    df["t"] = pd.to_datetime (df["t"], unit="ms")
+    df.set_index ("t", inplace=True)
+    # 重命名常用字段，方便与 yfinance 数据对应
+    rename_map = {"c": "Close", "o": "Open", "h": "High", "l": "Low", "v": "Volume", "n": "Num_transactions"}
+    df.rename (columns=rename_map, inplace=True)
+
+    # 保留用户指定的字段（若 features 中给的是原始名称，则转换为重命名后的名称）
+    cols_to_keep = []
+    for feat in features:
+        if feat in rename_map:
+            cols_to_keep.append (rename_map[feat])
+        elif feat in df.columns:
+            cols_to_keep.append (feat)
+    df = df[cols_to_keep]
+    # df["Weekday"] = df.index.dayofweek
+    return df
+
+
+def save_dataframe (df, file_path="raw_data.csv"):
+    """
+    保存 DataFrame 至指定路径的 CSV 文件。
+
+    :param df: pandas DataFrame
+    :param file_path: 保存文件路径
+    """
+    df.to_csv (file_path, index=True)
+    print (f"DataFrame 已保存至 {file_path}")
