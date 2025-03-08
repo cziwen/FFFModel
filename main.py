@@ -27,10 +27,14 @@ def prepare_data (config, csv_file=None):
         )
     else:
         data = pd.read_csv (csv_file, index_col=0, parse_dates=True)
-        if "Weekday" not in data.columns:
-            data["Weekday"] = data.index.dayofweek
 
-    scaler = MinMaxScaler (feature_range=(0, 1))
+    # 检查data前几个数据是否有nan，如果有，则舍弃前n行。
+    if data.isna().any().any():  # 检查是否有 NaN
+        first_valid_index = data.dropna().index[0]  # 找到第一个非 NaN 数据的索引
+        data = data.loc[first_valid_index:]  # 丢弃 NaN 之前的数据
+        data = data.dropna().reset_index(drop=True)  # 重新索引，确保连续性
+
+    scaler = MinMaxScaler (feature_range=(0, 1)) # min max 线形 归一化
     data_scaled = scaler.fit_transform (data)
     X, y = create_sequences (data_scaled, config["seq_length"])
     if len (X.shape) == 2:

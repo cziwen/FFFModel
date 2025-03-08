@@ -1,14 +1,14 @@
 {
     "_comment": "此文件用于 LSTM 股票预测模型的配置，请修改参数至你需要即可。",
     "API_KEY": "oilTTMMexxTBTmjivaMq3R0Y9ZS1BKbK",
-    "model_path": "训练好的模型/SPY_s15_1min_minibatch.pth",
+    "model_path": "训练好的模型/SPY_s15_5min.pth",
     "ticker": "SPY",
-    "interval": "1m",
-    "start_date": "2025-03-05",
-    "end_date": "2025-03-06",
+    "interval": "5m",
+    "start_date": "2024-01-01",
+    "end_date": "2024-02-01",
     "seq_length": 15,
-    "num_epochs": 100,
-    "hidden_size": 80,
+    "num_epochs": 50,
+    "hidden_size": 96,
     "num_layers": 3,
-    "learning_rate": 0.01
+    "learning_rate": 0.001
 }

@@ -43,6 +43,7 @@ def fetch_intraday_data (ticker, period="7d", interval="15m"):
 def create_sequences (data, seq_length):
     """
     将数组数据转换为序列样本，用于 LSTM 输入和目标。
+    整体行数会 减少 seq_length
 
     :param data: np.ndarray, 形状 (N, F)，N 是时间步数，F 是特征
     :param seq_length: 序列长度
